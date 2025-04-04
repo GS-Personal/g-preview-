@@ -107,16 +107,34 @@ def get_email_data():
         return None
 
 # Function to get Slack messages
+# Modify the get_slack_messages function to add better error handling
+
 def get_slack_messages():
     if "slack_credentials" not in st.session_state:
         return None
     
     try:
-        # Get access token
-        access_token = st.session_state["slack_credentials"]["access_token"]
-        # In the get_slack_messages function
-        access_token = st.session_state["slack_credentials"]["access_token"]
-        st.sidebar.write("Token (first 10 chars):", access_token[:10] + "...")
+        # Validate credentials structure with debugging
+        if not isinstance(st.session_state["slack_credentials"], dict):
+            st.sidebar.error(f"slack_credentials is not a dictionary: {type(st.session_state['slack_credentials'])}")
+            return None
+        
+        # Check if access_token exists
+        if "access_token" not in st.session_state["slack_credentials"]:
+            st.sidebar.error("No access_token found in slack_credentials")
+            return None
+        
+        # Get access token with safe checking
+        access_token = st.session_state["slack_credentials"].get("access_token")
+        
+        if not access_token:
+            st.sidebar.error("Access token is empty")
+            return None
+            
+        # Debug token info
+        token_preview = access_token[:5] + "..." + access_token[-5:] if len(access_token) > 10 else "too short"
+        st.sidebar.write(f"Token preview: {token_preview}")
+        
         # Get list of channels
         headers = {
             "Authorization": f"Bearer {access_token}"
@@ -126,10 +144,22 @@ def get_slack_messages():
         channels_response = requests.get("https://slack.com/api/conversations.list", headers=headers)
         channels_data = channels_response.json()
         
-        if not channels_data.get("ok", False):
-            st.sidebar.error(f"Error fetching Slack channels: {channels_data.get('error', 'Unknown error')}")
-            return None
+        # Debug the response
+        st.sidebar.write("API Response status:", channels_response.status_code)
+        if "error" in channels_data:
+            st.sidebar.error(f"Slack API error: {channels_data.get('error')}")
         
+        if not channels_data.get("ok", False):
+            error_msg = channels_data.get("error", "Unknown error")
+            st.sidebar.error(f"Error fetching Slack channels: {error_msg}")
+            
+            # If token is invalid, clear credentials
+            if error_msg == "invalid_auth" or error_msg == "not_authed":
+                st.sidebar.warning("Invalid Slack token. Please reconnect.")
+                if "slack_credentials" in st.session_state:
+                    del st.session_state["slack_credentials"]
+                return None
+                
         channels = channels_data.get("channels", [])
         
         # Get messages from each channel
@@ -150,6 +180,7 @@ def get_slack_messages():
             messages_data = messages_response.json()
             
             if not messages_data.get("ok", False):
+                st.sidebar.warning(f"Could not fetch messages for channel {channel_name}: {messages_data.get('error', 'Unknown error')}")
                 continue
                 
             messages = messages_data.get("messages", [])
@@ -159,20 +190,25 @@ def get_slack_messages():
                 ts = float(msg.get("ts", 0))
                 date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
                 
-                # Get user info
+                # Get user info - with safer handling
                 user_id = msg.get("user", "Unknown")
                 user_info = "Unknown User"
                 
                 if user_id != "Unknown":
-                    user_response = requests.get(
-                        "https://slack.com/api/users.info",
-                        headers=headers,
-                        params={"user": user_id}
-                    )
-                    user_data = user_response.json()
-                    
-                    if user_data.get("ok", False):
-                        user_info = user_data.get("user", {}).get("real_name", "Unknown User")
+                    try:
+                        user_response = requests.get(
+                            "https://slack.com/api/users.info",
+                            headers=headers,
+                            params={"user": user_id}
+                        )
+                        user_data = user_response.json()
+                        
+                        if user_data.get("ok", False):
+                            # Safely navigate nested dictionary
+                            user_obj = user_data.get("user", {})
+                            user_info = user_obj.get("real_name", "Unknown User")
+                    except Exception as user_error:
+                        st.sidebar.warning(f"Error fetching user info: {str(user_error)}")
                 
                 all_messages.append({
                     "channel": channel_name,
@@ -188,7 +224,70 @@ def get_slack_messages():
         
     except Exception as e:
         st.sidebar.error(f"Error fetching Slack messages: {str(e)}")
+        # Print more detailed error information
+        import traceback
+        st.sidebar.text(traceback.format_exc())
         return None
+
+
+# Also update the OAuth callback handler for Slack 
+# Find this section in your code (around line 300-330)
+
+# This is Slack OAuth callback
+try:
+    auth_code = st.query_params["code"]
+    
+    # Debug
+    st.sidebar.write("Processing Slack OAuth callback")
+    
+    # Exchange code for token
+    response = requests.post(
+        "https://slack.com/api/oauth.v2.access",
+        data={
+            "client_id": SLACK_CLIENT_ID,
+            "client_secret": SLACK_CLIENT_SECRET,
+            "code": auth_code,
+            "redirect_uri": SLACK_REDIRECT_URI
+        }
+    )
+    
+    # Debug response
+    st.sidebar.write("Slack API response status:", response.status_code)
+    
+    token_data = response.json()
+    
+    # Debug token data (safely without exposing sensitive info)
+    st.sidebar.write("Response contains 'ok':", "ok" in token_data)
+    st.sidebar.write("Response has access_token:", "access_token" in token_data)
+    
+    if not token_data.get("ok", False):
+        st.error(f"⚠️ Slack authentication error: {token_data.get('error', 'Unknown error')}")
+    else:
+        # Extract values with safe defaults
+        access_token = token_data.get("access_token")
+        team_info = token_data.get("team", {})
+        user_info = token_data.get("authed_user", {})
+        
+        if not access_token:
+            st.error("No access token received from Slack")
+        else:
+            # Store token info
+            st.session_state["slack_credentials"] = {
+                "access_token": access_token,
+                "team_name": team_info.get("name", "Unknown Workspace") if team_info else "Unknown Workspace",
+                "user_id": user_info.get("id") if user_info else None
+            }
+            st.success("✅ Slack connected successfully!")
+    
+    # Clear query parameters
+    st.query_params.clear()
+    st.rerun()
+    
+except Exception as e:
+    st.error(f"⚠️ Slack authentication error: {str(e)}")
+    import traceback
+    st.sidebar.text(traceback.format_exc())
+    st.query_params.clear()
 
 # Function to generate AI response based on user input and data
 def generate_response(user_input, email_data=None, slack_data=None):
