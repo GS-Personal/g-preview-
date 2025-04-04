@@ -114,7 +114,9 @@ def get_slack_messages():
     try:
         # Get access token
         access_token = st.session_state["slack_credentials"]["access_token"]
-        
+        # In the get_slack_messages function
+        access_token = st.session_state["slack_credentials"]["access_token"]
+        st.sidebar.write("Token (first 10 chars):", access_token[:10] + "...")
         # Get list of channels
         headers = {
             "Authorization": f"Bearer {access_token}"
@@ -429,11 +431,11 @@ with tabs[1]:  # Communications tab
             # Generate Slack authorization URL with a state parameter to identify it's for Slack
             state_param = f"slack_{str(uuid.uuid4())}"
             auth_url = (
-                f"https://slack.com/oauth/v2/authorize"
-                f"?client_id={SLACK_CLIENT_ID}"
-                f"&user_scope=channels:history,channels:read,groups:history,groups:read,users:read"
-                f"&redirect_uri={SLACK_REDIRECT_URI}"
-                f"&state={state_param}"
+            f"https://slack.com/oauth/v2/authorize"
+            f"?client_id={SLACK_CLIENT_ID}"
+            f"&user_scope=channels:history,channels:read,groups:history,groups:read,users:read"
+            f"&redirect_uri={SLACK_REDIRECT_URI}"
+            f"&state={state_param}"
             )
             
             # Display connect button
