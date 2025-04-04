@@ -21,13 +21,13 @@ flow = Flow.from_client_config(
         "web": {
             "client_id": client_id,
             "client_secret": client_secret,
-            "redirect_uris": ["http://localhost:8501"],
+            "redirect_uris": ["https://i4gbxwyduex7sferh9ktbc.streamlit.app"],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token"
         }
     },
     scopes=["https://www.googleapis.com/auth/gmail.readonly"],
-    redirect_uri="http://localhost:8501"
+    redirect_uri="https://i4gbxwyduex7sferh9ktbc.streamlit.app"
 )
 
 if "credentials" not in st.session_state:
