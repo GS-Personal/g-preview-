@@ -45,9 +45,7 @@ if "code" in query_params:
         }
         st.rerun()
     except Exception as e:
-        st.error("⚠️ Login failed. The session may have expired or the code is invalid.
-
-Please try connecting Gmail again.")
+        st.error("⚠️ Login failed. The session may have expired or the code is invalid.Please try connecting Gmail again.")
         st.stop()
 
 if "credentials" not in st.session_state:
