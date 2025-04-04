@@ -2,10 +2,14 @@ import streamlit as st
 import os
 import base64
 import json
+import uuid
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-import uuid
+from google.auth.transport.requests import Request
+
+# Add debugging mode
+DEBUG = True
 
 st.set_page_config(page_title="G – Gmail Integration")
 
@@ -26,8 +30,21 @@ if "oauth_state" not in st.session_state:
 # Get current query parameters using the supported method
 query_params = st.query_params
 
+# Debug current state
+if DEBUG:
+    st.sidebar.write("Debug Information:")
+    st.sidebar.write("Query Parameters:", dict(query_params))
+    st.sidebar.write("Session State Keys:", list(st.session_state.keys()))
+    if "oauth_state" in st.session_state:
+        st.sidebar.write("OAuth State:", st.session_state.oauth_state)
+    if "credentials" in st.session_state:
+        st.sidebar.write("Has Credentials: Yes")
+
 # Check for returned OAuth code in query params
 if "code" in query_params and "state" in query_params:
+    if DEBUG:
+        st.sidebar.write("Processing OAuth callback")
+        
     # Verify state parameter to prevent CSRF attacks
     received_state = query_params["state"]
     if received_state != st.session_state.oauth_state:
@@ -38,6 +55,8 @@ if "code" in query_params and "state" in query_params:
     
     try:
         auth_code = query_params["code"]
+        if DEBUG:
+            st.sidebar.write("Authorization code received:", auth_code[:10] + "...")
         
         flow = Flow.from_client_config(
             {
@@ -56,6 +75,14 @@ if "code" in query_params and "state" in query_params:
         # Exchange the authorization code for credentials
         flow.fetch_token(code=auth_code)
         credentials = flow.credentials
+        
+        if DEBUG:
+            st.sidebar.write("Token fetch successful")
+            st.sidebar.write("Access Token:", credentials.token[:10] + "...")
+            if credentials.refresh_token:
+                st.sidebar.write("Refresh Token:", credentials.refresh_token[:10] + "...")
+            else:
+                st.sidebar.write("No refresh token received!")
 
         # Save credentials to session
         st.session_state["credentials"] = {
@@ -66,6 +93,9 @@ if "code" in query_params and "state" in query_params:
             "client_secret": credentials.client_secret,
             "scopes": credentials.scopes
         }
+        
+        if DEBUG:
+            st.sidebar.write("Credentials saved to session state")
 
         # Clear the query parameters to prevent reuse of the authorization code
         st.query_params.clear()
@@ -74,11 +104,18 @@ if "code" in query_params and "state" in query_params:
     except Exception as e:
         st.error("⚠️ Login failed. The session may have expired or the code is invalid. Please try connecting Gmail again.")
         st.warning(f"🚨 Error during token fetch: {str(e)}")
+        if DEBUG:
+            st.sidebar.write("Token fetch error:", str(e))
+            import traceback
+            st.sidebar.text(traceback.format_exc())
         # Clear the invalid query parameters
         st.query_params.clear()
 
 # No credentials in session: show connect link
 if "credentials" not in st.session_state:
+    if DEBUG:
+        st.sidebar.write("No credentials in session, showing connect link")
+        
     flow = Flow.from_client_config(
         {
             "web": {
@@ -98,15 +135,32 @@ if "credentials" not in st.session_state:
         state=st.session_state.oauth_state,
         access_type='offline'  # Request a refresh token
     )
+    
+    if DEBUG:
+        st.sidebar.write("Auth URL generated (truncated):", auth_url[:50] + "...")
+        
     st.markdown(f"🔗 [Click here to connect Gmail]({auth_url})")
     st.write("📌 Waiting for Gmail connection...")
 else:
     # Show success state
     try:
-        creds = Credentials.from_authorized_user_info(info=st.session_state["credentials"])
+        if DEBUG:
+            st.sidebar.write("Attempting to use stored credentials")
+            
+        creds_info = st.session_state["credentials"]
+        creds = Credentials(
+            token=creds_info["token"],
+            refresh_token=creds_info.get("refresh_token"),
+            token_uri=creds_info["token_uri"],
+            client_id=creds_info["client_id"],
+            client_secret=creds_info["client_secret"],
+            scopes=creds_info["scopes"]
+        )
         
         # Check if token is expired and refresh if necessary
         if creds.expired and creds.refresh_token:
+            if DEBUG:
+                st.sidebar.write("Token expired, attempting refresh")
             creds.refresh(Request())
             # Update the stored credentials
             st.session_state["credentials"] = {
@@ -117,14 +171,25 @@ else:
                 "client_secret": creds.client_secret,
                 "scopes": creds.scopes
             }
-            
+            if DEBUG:
+                st.sidebar.write("Token refreshed successfully")
+                
         st.success("✅ Gmail connected!")
 
         # Initialize Gmail API service
+        if DEBUG:
+            st.sidebar.write("Initializing Gmail API service")
+            
         service = build("gmail", "v1", credentials=creds)
 
+        if DEBUG:
+            st.sidebar.write("Fetching unread messages")
+            
         results = service.users().messages().list(userId="me", labelIds=["UNREAD"], maxResults=10).execute()
         messages = results.get("messages", [])
+
+        if DEBUG:
+            st.sidebar.write(f"Found {len(messages) if messages else 0} unread messages")
 
         if not messages:
             st.info("No unread emails found.")
@@ -139,8 +204,16 @@ else:
     except Exception as e:
         st.error("Failed to fetch emails.")
         st.warning(f"🚨 Gmail API error: {str(e)}")
+        
+        if DEBUG:
+            st.sidebar.write("Gmail API error:", str(e))
+            import traceback
+            st.sidebar.text(traceback.format_exc())
+            
         # If token is invalid, clear credentials and prompt re-authentication
         if "invalid_grant" in str(e).lower() or "invalid_token" in str(e).lower():
+            if DEBUG:
+                st.sidebar.write("Invalid token detected, clearing credentials")
             del st.session_state["credentials"]
             st.warning("Your Gmail session has expired. Please reconnect.")
             st.rerun()
