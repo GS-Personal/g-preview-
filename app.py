@@ -487,13 +487,11 @@ with tabs[1]:  # Communications tab
             
             # Generate Slack authorization URL with a state parameter to identify it's for Slack
             state_param = f"slack_{str(uuid.uuid4())}"
-            auth_url = (
-                f"https://slack.com/oauth/v2/authorize"
-                f"?client_id={SLACK_CLIENT_ID}"
-                f"&user_scope=channels:history,channels:read,groups:history,groups:read,users:read"
-                f"&redirect_uri={SLACK_REDIRECT_URI}"
-                f"&state={state_param}"
-            )
+            auth_url = "https://slack.com/oauth/v2/authorize" + \
+           f"?client_id={SLACK_CLIENT_ID}" + \
+           f"&user_scope=channels:history,channels:read,groups:history,groups:read,users:read" + \
+           f"&redirect_uri={SLACK_REDIRECT_URI}" + \
+           f"&state={state_param}"
             
             # Display connect button
             st.markdown(
@@ -584,13 +582,11 @@ with tabs[2]:  # Settings tab
             
             # Generate Slack authorization URL
             state_param = f"slack_{str(uuid.uuid4())}"
-            auth_url = (
-                f"https://slack.com/oauth/v2/authorize"
-                f"?client_id={SLACK_CLIENT_ID}"
-                f"&user_scope=channels:history,channels:read,groups:history,groups:read,users:read"
-                f"&redirect_uri={SLACK_REDIRECT_URI}"
-                f"&state={state_param}"
-            )
+            auth_url = "https://slack.com/oauth/v2/authorize" + \
+           f"?client_id={SLACK_CLIENT_ID}" + \
+           f"&user_scope=channels:history,channels:read,groups:history,groups:read,users:read" + \
+           f"&redirect_uri={SLACK_REDIRECT_URI}" + \
+           f"&state={state_param}"
             
             # Display connect button
             st.markdown(
