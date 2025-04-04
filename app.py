@@ -107,8 +107,6 @@ def get_email_data():
         return None
 
 # Function to get Slack messages
-# Modify the get_slack_messages function to add better error handling
-
 def get_slack_messages():
     if "slack_credentials" not in st.session_state:
         return None
@@ -229,67 +227,6 @@ def get_slack_messages():
         st.sidebar.text(traceback.format_exc())
         return None
 
-
-# Also update the OAuth callback handler for Slack 
-# Find this section in your code (around line 300-330)
-
-# This is Slack OAuth callback
-try:
-    # Check for authorization code in query parameters (OAuth callback)
-if "code" in st.query_params:
-    
-    # Debug
-    st.sidebar.write("Processing Slack OAuth callback")
-    
-    # Exchange code for token
-    response = requests.post(
-        "https://slack.com/api/oauth.v2.access",
-        data={
-            "client_id": SLACK_CLIENT_ID,
-            "client_secret": SLACK_CLIENT_SECRET,
-            "code": auth_code,
-            "redirect_uri": SLACK_REDIRECT_URI
-        }
-    )
-    
-    # Debug response
-    st.sidebar.write("Slack API response status:", response.status_code)
-    
-    token_data = response.json()
-    
-    # Debug token data (safely without exposing sensitive info)
-    st.sidebar.write("Response contains 'ok':", "ok" in token_data)
-    st.sidebar.write("Response has access_token:", "access_token" in token_data)
-    
-    if not token_data.get("ok", False):
-        st.error(f"⚠️ Slack authentication error: {token_data.get('error', 'Unknown error')}")
-    else:
-        # Extract values with safe defaults
-        access_token = token_data.get("access_token")
-        team_info = token_data.get("team", {})
-        user_info = token_data.get("authed_user", {})
-        
-        if not access_token:
-            st.error("No access token received from Slack")
-        else:
-            # Store token info
-            st.session_state["slack_credentials"] = {
-                "access_token": access_token,
-                "team_name": team_info.get("name", "Unknown Workspace") if team_info else "Unknown Workspace",
-                "user_id": user_info.get("id") if user_info else None
-            }
-            st.success("✅ Slack connected successfully!")
-    
-    # Clear query parameters
-    st.query_params.clear()
-    st.rerun()
-    
-except Exception as e:
-    st.error(f"⚠️ Slack authentication error: {str(e)}")
-    import traceback
-    st.sidebar.text(traceback.format_exc())
-    st.query_params.clear()
-
 # Function to generate AI response based on user input and data
 def generate_response(user_input, email_data=None, slack_data=None):
     # Initialize context parts
@@ -357,6 +294,9 @@ if "code" in st.query_params:
         try:
             auth_code = st.query_params["code"]
             
+            # Debug info
+            st.sidebar.write("Processing Slack OAuth callback")
+            
             # Exchange code for token
             response = requests.post(
                 "https://slack.com/api/oauth.v2.access",
@@ -368,18 +308,33 @@ if "code" in st.query_params:
                 }
             )
             
+            # Debug response
+            st.sidebar.write("Slack API response status:", response.status_code)
+            
             token_data = response.json()
+            
+            # Debug token data (safely without exposing sensitive info)
+            st.sidebar.write("Response contains 'ok':", "ok" in token_data)
+            st.sidebar.write("Response has access_token:", "access_token" in token_data)
             
             if not token_data.get("ok", False):
                 st.error(f"⚠️ Slack authentication error: {token_data.get('error', 'Unknown error')}")
             else:
-                # Store token info
-                st.session_state["slack_credentials"] = {
-                    "access_token": token_data.get("access_token"),
-                    "team_name": token_data.get("team", {}).get("name", "Unknown Workspace"),
-                    "user_id": token_data.get("authed_user", {}).get("id")
-                }
-                st.success("✅ Slack connected successfully!")
+                # Extract values with safe defaults
+                access_token = token_data.get("access_token")
+                team_info = token_data.get("team", {})
+                user_info = token_data.get("authed_user", {})
+                
+                if not access_token:
+                    st.error("No access token received from Slack")
+                else:
+                    # Store token info
+                    st.session_state["slack_credentials"] = {
+                        "access_token": access_token,
+                        "team_name": team_info.get("name", "Unknown Workspace") if team_info else "Unknown Workspace",
+                        "user_id": user_info.get("id") if user_info else None
+                    }
+                    st.success("✅ Slack connected successfully!")
             
             # Clear query parameters
             st.query_params.clear()
@@ -387,6 +342,8 @@ if "code" in st.query_params:
             
         except Exception as e:
             st.error(f"⚠️ Slack authentication error: {str(e)}")
+            import traceback
+            st.sidebar.text(traceback.format_exc())
             st.query_params.clear()
     else:
         # This is Gmail OAuth callback
@@ -531,11 +488,11 @@ with tabs[1]:  # Communications tab
             # Generate Slack authorization URL with a state parameter to identify it's for Slack
             state_param = f"slack_{str(uuid.uuid4())}"
             auth_url = (
-            f"https://slack.com/oauth/v2/authorize"
-            f"?client_id={SLACK_CLIENT_ID}"
-            f"&user_scope=channels:history,channels:read,groups:history,groups:read,users:read"
-            f"&redirect_uri={SLACK_REDIRECT_URI}"
-            f"&state={state_param}"
+                f"https://slack.com/oauth/v2/authorize"
+                f"?client_id={SLACK_CLIENT_ID}"
+                f"&user_scope=channels:history,channels:read,groups:history,groups:read,users:read"
+                f"&redirect_uri={SLACK_REDIRECT_URI}"
+                f"&state={state_param}"
             )
             
             # Display connect button
