@@ -235,7 +235,8 @@ def get_slack_messages():
 
 # This is Slack OAuth callback
 try:
-    auth_code = st.query_params["code"]
+    # Check for authorization code in query parameters (OAuth callback)
+if "code" in st.query_params:
     
     # Debug
     st.sidebar.write("Processing Slack OAuth callback")
