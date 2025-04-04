@@ -17,6 +17,10 @@ st.set_page_config(page_title="G – Your AI Assistant", page_icon="🤖")
 # App title and header
 st.title("G – Your AI Assistant")
 
+# Use a more persistent state parameter
+if "persistent_slack_state" not in st.session_state:
+    st.session_state.persistent_slack_state = str(uuid.uuid4())
+
 # Load credentials from secrets
 CLIENT_ID = st.secrets["client_id"]
 CLIENT_SECRET = st.secrets["client_secret"]
@@ -32,8 +36,8 @@ SLACK_REDIRECT_URI = REDIRECT_URI  # Using the same redirect URI
 # Initialize OpenAI client
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# Debug information (collapsible)
-with st.sidebar.expander("Debug Information", expanded=False):
+# Enhanced Debug section
+with st.sidebar.expander("Debug Information", expanded=True):
     st.write("Session State Keys:", list(st.session_state.keys()))
     if "gmail_credentials" in st.session_state:
         st.write("Gmail Connected: Yes")
@@ -41,9 +45,31 @@ with st.sidebar.expander("Debug Information", expanded=False):
         st.write("Gmail Connected: No")
     if "slack_credentials" in st.session_state:
         st.write("Slack Connected: Yes")
+        st.write("Slack Team:", st.session_state["slack_credentials"].get("team_name", "Unknown"))
     else:
         st.write("Slack Connected: No")
     st.write("Query Parameters:", dict(st.query_params))
+    
+    # Add persistent state debugging
+    st.write("Persistent Slack State:", st.session_state.get("persistent_slack_state", "Not set"))
+    
+    # Add OAuth debug information
+    st.write("### OAuth Debug")
+    if "code" in st.query_params:
+        st.write("Authorization Code Present: YES")
+        st.write("Code First 10 chars:", st.query_params["code"][:10] + "...")
+    else:
+        st.write("Authorization Code Present: NO")
+    
+    if "state" in st.query_params:
+        st.write("State Parameter Present: YES")
+        st.write("State Value:", st.query_params["state"])
+        if st.query_params["state"].startswith("slack_"):
+            st.write("Is Slack State: YES")
+        else:
+            st.write("Is Slack State: NO")
+    else:
+        st.write("State Parameter Present: NO")
 
 # Function to get email data
 def get_email_data():
@@ -293,9 +319,12 @@ if "code" in st.query_params:
         # This is Slack OAuth callback
         try:
             auth_code = st.query_params["code"]
+            received_state = st.query_params["state"]
             
             # Debug info
             st.sidebar.write("Processing Slack OAuth callback")
+            st.sidebar.write("Received state:", received_state)
+            st.sidebar.write("Expected state prefix:", f"slack_{st.session_state.persistent_slack_state[:8]}...")
             
             # Exchange code for token
             response = requests.post(
@@ -310,31 +339,42 @@ if "code" in st.query_params:
             
             # Debug response
             st.sidebar.write("Slack API response status:", response.status_code)
+            st.sidebar.write("Response content type:", response.headers.get('content-type', 'unknown'))
             
-            token_data = response.json()
-            
-            # Debug token data (safely without exposing sensitive info)
-            st.sidebar.write("Response contains 'ok':", "ok" in token_data)
-            st.sidebar.write("Response has access_token:", "access_token" in token_data)
-            
-            if not token_data.get("ok", False):
-                st.error(f"⚠️ Slack authentication error: {token_data.get('error', 'Unknown error')}")
-            else:
-                # Extract values with safe defaults
-                access_token = token_data.get("access_token")
-                team_info = token_data.get("team", {})
-                user_info = token_data.get("authed_user", {})
+            try:
+                token_data = response.json()
                 
-                if not access_token:
-                    st.error("No access token received from Slack")
+                # Debug token data (safely without exposing sensitive info)
+                st.sidebar.write("Response JSON parsed successfully")
+                st.sidebar.write("Response contains 'ok':", "ok" in token_data)
+                st.sidebar.write("Response has access_token:", "access_token" in token_data)
+                
+                if not token_data.get("ok", False):
+                    error_msg = token_data.get("error", "Unknown error")
+                    st.error(f"⚠️ Slack authentication error: {error_msg}")
+                    st.write("Full error response:")
+                    st.json(token_data)
                 else:
-                    # Store token info
-                    st.session_state["slack_credentials"] = {
-                        "access_token": access_token,
-                        "team_name": team_info.get("name", "Unknown Workspace") if team_info else "Unknown Workspace",
-                        "user_id": user_info.get("id") if user_info else None
-                    }
-                    st.success("✅ Slack connected successfully!")
+                    # Extract values with safe defaults
+                    access_token = token_data.get("access_token")
+                    team_info = token_data.get("team", {})
+                    user_info = token_data.get("authed_user", {})
+                    
+                    if not access_token:
+                        st.error("No access token received from Slack")
+                    else:
+                        # Store token info
+                        st.session_state["slack_credentials"] = {
+                            "access_token": access_token,
+                            "team_name": team_info.get("name", "Unknown Workspace") if team_info else "Unknown Workspace",
+                            "user_id": user_info.get("id") if user_info else None
+                        }
+                        st.success("✅ Slack connected successfully!")
+                        st.write("You can now view your Slack messages in the Communications tab.")
+            except Exception as json_error:
+                st.error(f"Failed to parse JSON response: {str(json_error)}")
+                st.write("Raw response text (first 500 chars):")
+                st.code(response.text[:500])
             
             # Clear query parameters
             st.query_params.clear()
@@ -343,7 +383,7 @@ if "code" in st.query_params:
         except Exception as e:
             st.error(f"⚠️ Slack authentication error: {str(e)}")
             import traceback
-            st.sidebar.text(traceback.format_exc())
+            st.code(traceback.format_exc())
             st.query_params.clear()
     else:
         # This is Gmail OAuth callback
@@ -480,26 +520,43 @@ with tabs[1]:  # Communications tab
     with comm_tabs[1]:  # Slack tab
         st.subheader("💬 Recent Slack Messages")
         
+        # Debug info for this tab
+        st.write("Debug: Persistent state =", st.session_state.get("persistent_slack_state", "Not set"))
+        
         # Check if slack is connected
         if "slack_credentials" not in st.session_state:
             # Slack connection section
             st.info("Connect your Slack account to access your messages")
             
-            # Generate Slack authorization URL with a state parameter to identify it's for Slack
-            state_param = f"slack_{str(uuid.uuid4())}"
-            auth_url = "https://slack.com/oauth/v2/authorize" + \
-           f"?client_id={SLACK_CLIENT_ID}" + \
-           f"&user_scope=channels:history,channels:read,groups:history,groups:read,users:read" + \
-           f"&redirect_uri={SLACK_REDIRECT_URI}" + \
-           f"&state={state_param}"
+            # Generate Slack authorization URL with persistent state parameter
+            persistent_state = f"slack_{st.session_state.persistent_slack_state}"
             
-            # Display connect button
-            st.markdown(
-                f"""
-                <a href="{auth_url}" target="_self">🔗 Connect Slack</a>
-                """, 
-                unsafe_allow_html=True
-            )
+            # Use a more explicit URL construction
+            base_url = "https://slack.com/oauth/v2/authorize"
+            params = {
+                "client_id": SLACK_CLIENT_ID,
+                "user_scope": "channels:history,channels:read,groups:history,groups:read,users:read",
+                "redirect_uri": SLACK_REDIRECT_URI,
+                "state": persistent_state
+            }
+            
+            # Build the URL with proper encoding
+            param_strings = []
+            for key, value in params.items():
+                param_strings.append(f"{key}={requests.utils.quote(value)}")
+            
+            auth_url = base_url + "?" + "&".join(param_strings)
+            
+            # Display debug info
+            st.write("Auth URL (debug):", auth_url[:50] + "...")
+            
+            # Display regular markdown link (will open in new window)
+            st.markdown(f"🔗 [Connect Slack (opens in new window)]({auth_url})")
+            
+            # Also show the auth URL text for manual copying if needed
+            with st.expander("Manual Connection Option"):
+                st.write("If the link above doesn't work, copy this URL and paste it into a new browser tab:")
+                st.code(auth_url)
         else:
             # Display team name
             team_name = st.session_state["slack_credentials"].get("team_name", "Your Workspace")
@@ -580,21 +637,27 @@ with tabs[2]:  # Settings tab
         else:
             st.warning("❌ Not connected")
             
-            # Generate Slack authorization URL
-            state_param = f"slack_{str(uuid.uuid4())}"
-            auth_url = "https://slack.com/oauth/v2/authorize" + \
-           f"?client_id={SLACK_CLIENT_ID}" + \
-           f"&user_scope=channels:history,channels:read,groups:history,groups:read,users:read" + \
-           f"&redirect_uri={SLACK_REDIRECT_URI}" + \
-           f"&state={state_param}"
+            # Generate Slack authorization URL with persistent state
+            persistent_state = f"slack_{st.session_state.persistent_slack_state}"
             
-            # Display connect button
-            st.markdown(
-                f"""
-                <a href="{auth_url}" target="_self">🔗 Connect Slack</a>
-                """, 
-                unsafe_allow_html=True
-            )
+            # Use a more explicit URL construction
+            base_url = "https://slack.com/oauth/v2/authorize"
+            params = {
+                "client_id": SLACK_CLIENT_ID,
+                "user_scope": "channels:history,channels:read,groups:history,groups:read,users:read",
+                "redirect_uri": SLACK_REDIRECT_URI,
+                "state": persistent_state
+            }
+            
+            # Build the URL with proper encoding
+            param_strings = []
+            for key, value in params.items():
+                param_strings.append(f"{key}={requests.utils.quote(value)}")
+            
+            auth_url = base_url + "?" + "&".join(param_strings)
+            
+            # Display regular markdown link (will open in new window)
+            st.markdown(f"🔗 [Connect Slack (opens in new window)]({auth_url})")
     
     st.write("---")
     
