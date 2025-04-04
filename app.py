@@ -496,7 +496,12 @@ with tabs[1]:  # Communications tab
             )
             
             # Display connect button
-            st.markdown(f"🔗 [Connect Slack]({auth_url})")
+            st.markdown(
+            f"""
+            <a href="{auth_url}" target="_self">🔗 Connect Slack</a>
+            """, 
+            unsafe_allow_html=True
+            )
         else:
             # Display team name
             team_name = st.session_state["slack_credentials"].get("team_name", "Your Workspace")
@@ -588,7 +593,12 @@ with tabs[2]:  # Settings tab
             )
             
             # Display connect button
-            st.markdown(f"🔗 [Connect Slack]({auth_url})")
+st.markdown(
+    f"""
+    <a href="{auth_url}" target="_self">🔗 Connect Slack</a>
+    """, 
+    unsafe_allow_html=True
+)
     
     st.write("---")
     
