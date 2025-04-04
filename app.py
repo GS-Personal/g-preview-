@@ -592,23 +592,23 @@ with tabs[2]:  # Settings tab
                 f"&state={state_param}"
             )
             
-            # Display connect button
-st.markdown(
-    f"""
-    <a href="{auth_url}" target="_self">🔗 Connect Slack</a>
-    """, 
-    unsafe_allow_html=True
-)
-    
-    st.write("---")
-    
-    # Clear chat history option
-    st.write("### Chat History")
-    if st.button("Clear Chat History"):
-        st.session_state.messages = []
-        st.rerun()
-    
-    st.write("---")
+           # Display connect button
+            st.markdown(
+             f"""
+            <a href="{auth_url}" target="_self">🔗 Connect Slack</a>
+            """, 
+            unsafe_allow_html=True
+            )
+
+            st.write("---")  # Fix: This line needs to be at the same indentation level as the lines above
+
+            # Clear chat history option
+            st.write("### Chat History")
+            if st.button("Clear Chat History"):
+            st.session_state.messages = []
+            st.rerun()
+
+            st.write("---")
     
     # App information
     st.write("### About")
