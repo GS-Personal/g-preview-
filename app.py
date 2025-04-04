@@ -111,17 +111,14 @@ if "credentials" not in st.session_state:
         state=st.session_state.oauth_state
     )
     
-    # Display connect button
-    if st.button("🔗 Connect Gmail"):
-        # Use JavaScript for redirection
-        js_code = f"""
-        <script>
-        window.parent.location.href = "{auth_url}";
-        </script>
-        """
-        st.components.v1.html(js_code, height=0)
-    
+    # Display connect button and direct link
+    st.markdown(f"🔗 [Click here to connect Gmail]({auth_url})")
     st.write("📌 Waiting for Gmail connection...")
+    
+    # Also add a button option in case the link doesn't work
+    if st.button("Connect Gmail (Alternative)"):
+        st.info(f"If redirect doesn't happen automatically, please [click this link]({auth_url})")
+        st.markdown(f"<meta http-equiv='refresh' content='0;URL={auth_url}'>", unsafe_allow_html=True)
     
 else:
     # Already authenticated - display emails
