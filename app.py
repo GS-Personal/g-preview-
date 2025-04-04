@@ -1,85 +1,159 @@
 import streamlit as st
 import os
 import json
-from googleapiclient.discovery import build
+import uuid
+from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
-import streamlit_oauth as oauth
 
 st.set_page_config(page_title="G – Gmail Integration")
 
 st.title("G – Your AI Assistant")
 st.subheader("📧 Gmail Integration")
 
-# Configuration
+# Load credentials from secrets
 CLIENT_ID = st.secrets["client_id"]
 CLIENT_SECRET = st.secrets["client_secret"]
 REDIRECT_URI = "https://i4gbxwyduex7sferh9ktbc.streamlit.app"
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-AUTH_URL = "https://accounts.google.com/o/oauth2/auth"
-TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# Initialize the OAuth handler
-oauth_handler = oauth.OAuth2(
-    client_id=CLIENT_ID,
-    client_secret=CLIENT_SECRET,
-    authorize_endpoint=AUTH_URL,
-    token_endpoint=TOKEN_URL,
-    refresh_endpoint=TOKEN_URL,
-    revoke_endpoint="https://oauth2.googleapis.com/revoke",
-    redirect_uri=REDIRECT_URI,
-    scope=SCOPES,
-)
+# Create a state parameter if it doesn't exist
+if "oauth_state" not in st.session_state:
+    st.session_state.oauth_state = str(uuid.uuid4())
 
-# For debugging
-debug_expander = st.sidebar.expander("Debug Information", expanded=True)
-with debug_expander:
+# Debug information in sidebar
+with st.sidebar.expander("Debug Information", expanded=True):
     st.write("Session State Keys:", list(st.session_state.keys()))
-    st.write("Is Authenticated:", oauth_handler.is_authenticated())
-    if "token_info" in st.session_state:
-        st.write("Has Token Info: Yes")
+    if "credentials" in st.session_state:
+        st.write("Has Credentials: Yes")
+    st.write("OAuth State:", st.session_state.oauth_state)
+    st.write("Query Parameters:", dict(st.query_params))
 
-# Create "Login with Google" button
-if not oauth_handler.is_authenticated():
-    # Not authenticated yet, show the login button
-    if st.button("🔗 Connect Gmail"):
-        # Redirect to Google's authorization page
-        authorization_url = oauth_handler.get_authorization_url(
-            access_type="offline",
-            prompt="consent",
-            include_granted_scopes="true"
-        )
-        st.markdown(f"Redirecting to Google... [Click here if not redirected]({authorization_url})")
-        # Use JavaScript to redirect
-        st.components.v1.html(
-            f"""
-            <script>
-            window.top.location.href = "{authorization_url}";
-            </script>
-            """,
-            height=0,
-        )
-    st.write("📌 Waiting for Gmail connection...")
-else:
-    # Already authenticated
-    st.success("✅ Gmail connected!")
+# Check for authorization code in query parameters
+if "code" in st.query_params and "state" in st.query_params:
+    # Verify state parameter to prevent CSRF attacks
+    received_state = st.query_params["state"]
     
-    # Get a fresh token if needed
-    token_info = oauth_handler.get_token()
+    with st.sidebar:
+        st.write("Received state:", received_state)
+        st.write("Stored state:", st.session_state.oauth_state)
     
-    # Create credentials object from token info
-    creds = Credentials(
-        token=token_info["access_token"],
-        refresh_token=token_info.get("refresh_token"),
-        token_uri=TOKEN_URL,
-        client_id=CLIENT_ID,
-        client_secret=CLIENT_SECRET,
-        scopes=SCOPES
+    if received_state != st.session_state.oauth_state:
+        st.error("⚠️ State verification failed. Please try connecting Gmail again.")
+    else:
+        try:
+            auth_code = st.query_params["code"]
+            
+            # Create flow instance
+            flow = Flow.from_client_config(
+                {
+                    "web": {
+                        "client_id": CLIENT_ID,
+                        "client_secret": CLIENT_SECRET,
+                        "redirect_uris": [REDIRECT_URI],
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token"
+                    }
+                },
+                scopes=SCOPES,
+                redirect_uri=REDIRECT_URI
+            )
+            
+            # Exchange authorization code for credentials
+            flow.fetch_token(code=auth_code)
+            credentials = flow.credentials
+            
+            # Store credentials in session state
+            st.session_state["credentials"] = {
+                "token": credentials.token,
+                "refresh_token": credentials.refresh_token,
+                "token_uri": credentials.token_uri,
+                "client_id": credentials.client_id,
+                "client_secret": credentials.client_secret,
+                "scopes": credentials.scopes
+            }
+            
+            # Clear query parameters
+            st.query_params.clear()
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"⚠️ Authentication error: {str(e)}")
+            st.warning("Please try connecting Gmail again.")
+            st.query_params.clear()
+
+# Display appropriate UI based on authentication status
+if "credentials" not in st.session_state:
+    # Not authenticated yet - show connect button
+    st.write("Connect your Gmail account to access your emails.")
+    
+    # Create flow instance for authorization URL
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "redirect_uris": [REDIRECT_URI],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token"
+            }
+        },
+        scopes=SCOPES,
+        redirect_uri=REDIRECT_URI
     )
     
+    # Generate authorization URL with state parameter
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+        state=st.session_state.oauth_state
+    )
+    
+    # Display connect button
+    if st.button("🔗 Connect Gmail"):
+        # Use JavaScript for redirection
+        js_code = f"""
+        <script>
+        window.parent.location.href = "{auth_url}";
+        </script>
+        """
+        st.components.v1.html(js_code, height=0)
+    
+    st.write("📌 Waiting for Gmail connection...")
+    
+else:
+    # Already authenticated - display emails
     try:
-        # Initialize Gmail API
-        service = build("gmail", "v1", credentials=creds)
+        # Recreate credentials object
+        creds_dict = st.session_state["credentials"]
+        credentials = Credentials(
+            token=creds_dict["token"],
+            refresh_token=creds_dict.get("refresh_token"),
+            token_uri=creds_dict["token_uri"],
+            client_id=creds_dict["client_id"],
+            client_secret=creds_dict["client_secret"],
+            scopes=creds_dict["scopes"]
+        )
+        
+        # Check if token is expired and refresh if needed
+        if credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+            # Update stored credentials
+            st.session_state["credentials"] = {
+                "token": credentials.token,
+                "refresh_token": credentials.refresh_token,
+                "token_uri": credentials.token_uri,
+                "client_id": credentials.client_id,
+                "client_secret": credentials.client_secret,
+                "scopes": credentials.scopes
+            }
+        
+        st.success("✅ Gmail connected!")
+        
+        # Initialize Gmail API service
+        service = build("gmail", "v1", credentials=credentials)
         
         # Fetch unread emails
         results = service.users().messages().list(userId="me", labelIds=["UNREAD"], maxResults=10).execute()
@@ -88,25 +162,36 @@ else:
         if not messages:
             st.info("No unread emails found.")
         else:
-            st.markdown("### 🔟 Last 10 Unread Email Subjects:")
+            st.subheader("🔟 Last 10 Unread Emails")
+            
             for msg in messages:
                 msg_detail = service.users().messages().get(userId="me", id=msg["id"]).execute()
                 headers = msg_detail.get("payload", {}).get("headers", [])
+                
                 subject = next((h["value"] for h in headers if h["name"] == "Subject"), "(No Subject)")
                 sender = next((h["value"] for h in headers if h["name"] == "From"), "(Unknown Sender)")
-                st.write(f"- **{subject}** from {sender}")
+                date = next((h["value"] for h in headers if h["name"] == "Date"), "")
+                
+                with st.expander(f"📩 {subject}"):
+                    st.write(f"**From:** {sender}")
+                    st.write(f"**Date:** {date}")
+                    
+                    # Try to get snippet or body
+                    if "snippet" in msg_detail:
+                        st.write("**Preview:**")
+                        st.write(msg_detail["snippet"])
         
-        # Add logout button
+        # Add disconnect button
         if st.button("Disconnect Gmail"):
-            oauth_handler.logout()
+            del st.session_state["credentials"]
             st.rerun()
             
     except Exception as e:
-        st.error("Failed to fetch emails.")
-        st.warning(f"🚨 Gmail API error: {str(e)}")
+        st.error(f"Failed to fetch emails: {str(e)}")
         
-        # Check if token expired or invalid
+        # Handle invalid credentials
         if "invalid_grant" in str(e).lower() or "invalid_token" in str(e).lower():
             st.warning("Your Gmail session has expired. Please reconnect.")
-            oauth_handler.logout()
+            if "credentials" in st.session_state:
+                del st.session_state["credentials"]
             st.rerun()
