@@ -23,21 +23,21 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 if "oauth_state" not in st.session_state:
     st.session_state.oauth_state = str(uuid.uuid4())
 
-# Get current query parameters using the safer method
-query_params = st.experimental_get_query_params()
+# Get current query parameters using the supported method
+query_params = st.query_params
 
 # Check for returned OAuth code in query params
 if "code" in query_params and "state" in query_params:
     # Verify state parameter to prevent CSRF attacks
-    received_state = query_params.get("state", [""])[0]
+    received_state = query_params["state"]
     if received_state != st.session_state.oauth_state:
         st.error("⚠️ State verification failed. Please try connecting Gmail again.")
         # Clear the invalid query parameters
-        st.experimental_set_query_params()
+        st.query_params.clear()
         st.rerun()
     
     try:
-        auth_code = query_params.get("code", [""])[0]
+        auth_code = query_params["code"]
         
         flow = Flow.from_client_config(
             {
@@ -68,14 +68,14 @@ if "code" in query_params and "state" in query_params:
         }
 
         # Clear the query parameters to prevent reuse of the authorization code
-        st.experimental_set_query_params()
+        st.query_params.clear()
         st.rerun()
 
     except Exception as e:
         st.error("⚠️ Login failed. The session may have expired or the code is invalid. Please try connecting Gmail again.")
         st.warning(f"🚨 Error during token fetch: {str(e)}")
         # Clear the invalid query parameters
-        st.experimental_set_query_params()
+        st.query_params.clear()
 
 # No credentials in session: show connect link
 if "credentials" not in st.session_state:
