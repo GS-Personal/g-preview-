@@ -5,6 +5,7 @@ import json
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+import uuid
 
 st.set_page_config(page_title="G – Gmail Integration")
 
@@ -18,15 +19,26 @@ redirect_uri = "https://i4gbxwyduex7sferh9ktbc.streamlit.app"  # Replace with yo
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-# DEBUG: Log current query parameters
-query_params = st.query_params
-st.write("🔍 Current query params:", query_params)
+# Initialize oauth_state in session if not present
+if "oauth_state" not in st.session_state:
+    st.session_state.oauth_state = str(uuid.uuid4())
+
+# Get current query parameters using the safer method
+query_params = st.experimental_get_query_params()
 
 # Check for returned OAuth code in query params
-if "code" in query_params:
+if "code" in query_params and "state" in query_params:
+    # Verify state parameter to prevent CSRF attacks
+    received_state = query_params.get("state", [""])[0]
+    if received_state != st.session_state.oauth_state:
+        st.error("⚠️ State verification failed. Please try connecting Gmail again.")
+        # Clear the invalid query parameters
+        st.experimental_set_query_params()
+        st.rerun()
+    
     try:
-        st.write("🔑 OAuth code received:", query_params["code"][0])
-
+        auth_code = query_params.get("code", [""])[0]
+        
         flow = Flow.from_client_config(
             {
                 "web": {
@@ -41,14 +53,9 @@ if "code" in query_params:
             redirect_uri=redirect_uri
         )
 
-        flow.fetch_token(code=query_params["code"][0])
+        # Exchange the authorization code for credentials
+        flow.fetch_token(code=auth_code)
         credentials = flow.credentials
-
-        # DEBUG: Log token details
-        st.write("✅ Token successfully fetched!")
-        st.write("Access Token:", credentials.token)
-        st.write("Refresh Token:", credentials.refresh_token)
-        st.write("Token Scopes:", credentials.scopes)
 
         # Save credentials to session
         st.session_state["credentials"] = {
@@ -60,12 +67,15 @@ if "code" in query_params:
             "scopes": credentials.scopes
         }
 
+        # Clear the query parameters to prevent reuse of the authorization code
+        st.experimental_set_query_params()
         st.rerun()
 
     except Exception as e:
         st.error("⚠️ Login failed. The session may have expired or the code is invalid. Please try connecting Gmail again.")
-        st.write("🚨 Error during token fetch:", str(e))
-        st.stop()
+        st.warning(f"🚨 Error during token fetch: {str(e)}")
+        # Clear the invalid query parameters
+        st.experimental_set_query_params()
 
 # No credentials in session: show connect link
 if "credentials" not in st.session_state:
@@ -82,23 +92,39 @@ if "credentials" not in st.session_state:
         scopes=SCOPES,
         redirect_uri=redirect_uri
     )
-    auth_url, _ = flow.authorization_url(prompt='consent')
+    # Include state parameter in authorization URL
+    auth_url, _ = flow.authorization_url(
+        prompt='consent',
+        state=st.session_state.oauth_state,
+        access_type='offline'  # Request a refresh token
+    )
     st.markdown(f"🔗 [Click here to connect Gmail]({auth_url})")
     st.write("📌 Waiting for Gmail connection...")
 else:
     # Show success state
-    creds = Credentials.from_authorized_user_info(info=st.session_state["credentials"])
-    st.success("✅ Gmail connected!")
-
     try:
+        creds = Credentials.from_authorized_user_info(info=st.session_state["credentials"])
+        
+        # Check if token is expired and refresh if necessary
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            # Update the stored credentials
+            st.session_state["credentials"] = {
+                "token": creds.token,
+                "refresh_token": creds.refresh_token,
+                "token_uri": creds.token_uri,
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+                "scopes": creds.scopes
+            }
+            
+        st.success("✅ Gmail connected!")
+
         # Initialize Gmail API service
         service = build("gmail", "v1", credentials=creds)
 
         results = service.users().messages().list(userId="me", labelIds=["UNREAD"], maxResults=10).execute()
         messages = results.get("messages", [])
-
-        # DEBUG: Log retrieved message IDs
-        st.write("📬 Unread message metadata:", messages)
 
         if not messages:
             st.info("No unread emails found.")
@@ -112,4 +138,9 @@ else:
 
     except Exception as e:
         st.error("Failed to fetch emails.")
-        st.write("🚨 Gmail API error:", str(e))
+        st.warning(f"🚨 Gmail API error: {str(e)}")
+        # If token is invalid, clear credentials and prompt re-authentication
+        if "invalid_grant" in str(e).lower() or "invalid_token" in str(e).lower():
+            del st.session_state["credentials"]
+            st.warning("Your Gmail session has expired. Please reconnect.")
+            st.rerun()
