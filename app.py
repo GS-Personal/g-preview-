@@ -605,25 +605,22 @@ with tabs[1]:  # Communications tab
             # Display emails
             email_data = get_email_data()
             
-            if not email_data:
-                st.info("No unread emails found.")
-            else:
-               if email_data:
-                    for i, email in enumerate(email_data, 1):
-                    # Check if email is a dictionary and has necessary fields
-                        if isinstance(email, dict):
-                    # Use a safer approach for the expander title
-                            email_subject = email.get('subject', 'No Subject')
-                            with st.expander(f"📩 {email_subject}"):
-                                st.write(f"**From:** {email.get('sender', 'Unknown Sender')}")
-                                st.write(f"**Date:** {email.get('date', 'No Date')}")
-                                st.write("**Preview:**")
-                                st.write(email.get('snippet', 'No preview available'))
-                       else:
-                    # Handle case where email is not properly structured
-                            st.warning(f"Email #{i} has an invalid format")
+        if not email_data:
+            st.info("No unread emails found.")
+        else:
+            for i, email in enumerate(email_data, 1):
+        # Check if email is a dictionary and has necessary fields
+                if isinstance(email, dict):
+            # Use a safer approach for the expander title
+                    email_subject = email.get('subject', 'No Subject')
+                    with st.expander(f"📩 {email_subject}"):
+                         st.write(f"**From:** {email.get('sender', 'Unknown Sender')}")
+                        st.write(f"**Date:** {email.get('date', 'No Date')}")
+                        st.write("**Preview:**")
+                        st.write(email.get('snippet', 'No preview available'))
                 else:
-                    st.info("No emails found.")
+            # Handle case where email is not properly structured
+                    st.warning(f"Email #{i} has an invalid format")
     
     with comm_tabs[1]:  # Slack tab
         st.subheader("💬 Recent Slack Messages")
