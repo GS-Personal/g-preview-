@@ -425,7 +425,6 @@ def generate_response(user_input, email_data=None, slack_data=None):
         return f"I'm sorry, I encountered an error while processing your request. Please try again later."
 
 # This will run once when Gmail is first connected to perform the analysis
-
 def display_top_contacts():
     if "gmail_credentials" in st.session_state and "top_contacts_analyzed" not in st.session_state:
         st.session_state.top_contacts_analyzed = True
@@ -549,7 +548,7 @@ with tabs[0]:  # Chat tab
             st.markdown(prompt)
         
         # Get email and slack data (if available)
-        email_data = get_email_data() if "gmail_credentials" in st.session_state else None
+        email_data, _ = get_email_data() if "gmail_credentials" in st.session_state else (None, None)
         slack_data = get_slack_messages() if "slack_credentials" in st.session_state else None
         
         # Display assistant response
@@ -603,24 +602,28 @@ with tabs[1]:  # Communications tab
             st.markdown(f"🔗 [Connect Gmail]({auth_url})")
         else:
             # Display emails
-            email_data = get_email_data()
-            
-        if not email_data:
-            st.info("No unread emails found.")
-        else:
-            for i, email in enumerate(email_data, 1):
-        # Check if email is a dictionary and has necessary fields
-                if isinstance(email, dict):
-            # Use a safer approach for the expander title
-                    email_subject = email.get('subject', 'No Subject')
-                    with st.expander(f"📩 {email_subject}"):
-                         st.write(f"**From:** {email.get('sender', 'Unknown Sender')}")
-                         st.write(f"**Date:** {email.get('date', 'No Date')}")
-                         st.write("**Preview:**")
-                         st.write(email.get('snippet', 'No preview available'))
+            try:
+                email_data, _ = get_email_data()
+                
+                if email_data is None or len(email_data) == 0:
+                    st.info("No unread emails found.")
                 else:
-            # Handle case where email is not properly structured
-                    st.warning(f"Email #{i} has an invalid format")
+                    for i, email in enumerate(email_data, 1):
+                        # Check if email is a dictionary and has necessary fields
+                        if isinstance(email, dict):
+                            # Use a safer approach for the expander title
+                            email_subject = email.get('subject', 'No Subject')
+                            with st.expander(f"📩 {email_subject}"):
+                                st.write(f"**From:** {email.get('sender', 'Unknown Sender')}")
+                                st.write(f"**Date:** {email.get('date', 'No Date')}")
+                                st.write("**Preview:**")
+                                st.write(email.get('snippet', 'No preview available'))
+                        else:
+                            # Handle case where email is not properly structured
+                            st.warning(f"Email #{i} has an invalid format")
+            except Exception as e:
+                st.error(f"Error loading emails: {str(e)}")
+                st.info("Please try refreshing the page or reconnecting your Gmail account.")
     
     with comm_tabs[1]:  # Slack tab
         st.subheader("💬 Recent Slack Messages")
