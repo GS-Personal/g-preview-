@@ -3,7 +3,9 @@ import os
 import json
 import uuid
 import time
+import base64
 from datetime import datetime
+from dateutil import parser as date_parser
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -43,7 +45,7 @@ if "manual_slack_code" not in st.session_state:
     st.session_state.manual_slack_code = ""
 
 # Enhanced Debug section
-with st.sidebar.expander("Debug Information", expanded=True):
+with st.sidebar.expander("Debug Information", expanded=False):
     st.write("Session State Keys:", list(st.session_state.keys()))
     if "gmail_credentials" in st.session_state:
         st.write("Gmail Connected: Yes")
@@ -77,7 +79,24 @@ with st.sidebar.expander("Debug Information", expanded=True):
     else:
         st.write("State Parameter Present: NO")
 
-# Modify the email fetching function to get more emails and analyze top contacts
+# Function to get the authenticated user's email address
+def get_user_email_address(service):
+    """Get the email address of the authenticated user"""
+    try:
+        profile = service.users().getProfile(userId='me').execute()
+        return profile.get('emailAddress')
+    except Exception as e:
+        st.sidebar.error(f"Error fetching user profile: {str(e)}")
+        return None
+
+# Function to parse date strings
+def parse_date(date_string):
+    try:
+        return date_parser.parse(date_string)
+    except Exception:
+        return datetime.min  # Default to minimum date if parsing fails
+
+# Modified email fetching function to get both incoming and outgoing emails
 def get_email_data(max_emails=10, analyze_contacts=False):
     if "gmail_credentials" not in st.session_state:
         return None, None
@@ -110,34 +129,66 @@ def get_email_data(max_emails=10, analyze_contacts=False):
         # Initialize Gmail API service
         service = build("gmail", "v1", credentials=credentials)
         
+        # Get user's own email address
+        user_email = get_user_email_address(service)
+        
         # Fetch emails - use a larger number if analyzing contacts
         fetch_count = 500 if analyze_contacts else max_emails
         
-        # Fetch recent emails (not just unread)
-        results = service.users().messages().list(userId="me", maxResults=fetch_count).execute()
-        messages = results.get("messages", [])
+        # Get both received and sent emails
+        received_results = service.users().messages().list(
+            userId="me", 
+            maxResults=fetch_count // 2,
+            q="in:inbox"
+        ).execute()
+        
+        sent_results = service.users().messages().list(
+            userId="me", 
+            maxResults=fetch_count // 2,
+            q="in:sent"
+        ).execute()
+        
+        received_messages = received_results.get("messages", [])
+        sent_messages = sent_results.get("messages", [])
+        
+        # Combine and process messages
+        all_messages = []
+        if received_messages:
+            all_messages.extend([(msg, "incoming") for msg in received_messages])
+        if sent_messages:
+            all_messages.extend([(msg, "outgoing") for msg in sent_messages])
+            
+        # If we need to limit total count
+        all_messages = all_messages[:fetch_count]
         
         email_data = []
         contact_counter = Counter()
+        contact_emails = {}  # Store email addresses with contact names
         system_domains = ["noreply", "no-reply", "donotreply", "automated", "notification", "alert", "updates", 
-                          "newsletter", "info@", "support@", "help@", "service@", "billing@", "account@"]
+                         "newsletter", "info@", "support@", "help@", "service@", "billing@", "account@"]
         
-        if messages:
-            for msg in messages:
+        if all_messages:
+            for msg_tuple in all_messages:
+                msg, direction = msg_tuple
+                
                 # Display a progress bar if analyzing many emails
-                if analyze_contacts and len(messages) > 20:
-                    progress_text = f"Analyzing emails... ({len(email_data)+1}/{len(messages)})"
+                if analyze_contacts and len(all_messages) > 20:
+                    progress_text = f"Analyzing emails... ({len(email_data)+1}/{len(all_messages)})"
                     if 'progress_bar' not in st.session_state:
                         st.session_state.progress_bar = st.progress(0.0, text=progress_text)
                     else:
-                        st.session_state.progress_bar.progress((len(email_data)+1)/len(messages), text=progress_text)
+                        st.session_state.progress_bar.progress((len(email_data)+1)/len(all_messages), text=progress_text)
                 
                 # Get message details
                 msg_detail = service.users().messages().get(userId="me", id=msg["id"]).execute()
                 headers = msg_detail.get("payload", {}).get("headers", [])
                 
                 subject = next((h["value"] for h in headers if h["name"] == "Subject"), "(No Subject)")
+                
+                # Get sender and recipient according to direction
                 sender = next((h["value"] for h in headers if h["name"] == "From"), "(Unknown Sender)")
+                recipient = next((h["value"] for h in headers if h["name"] == "To"), "(Unknown Recipient)")
+                
                 date = next((h["value"] for h in headers if h["name"] == "Date"), "")
                 snippet = msg_detail.get("snippet", "")
                 
@@ -145,33 +196,58 @@ def get_email_data(max_emails=10, analyze_contacts=False):
                 email_data.append({
                     "subject": subject,
                     "sender": sender,
+                    "recipient": recipient,
                     "date": date,
-                    "snippet": snippet
+                    "snippet": snippet,
+                    "direction": direction
                 })
                 
-                # If analyzing contacts, count frequencies of real people
+                # For contact analysis, count the other party, not the user
                 if analyze_contacts:
-                    # Extract name and email from the sender field
-                    email_pattern = r'[\w\.-]+@[\w\.-]+'
-                    email_match = re.search(email_pattern, sender)
-                    email_address = email_match.group(0) if email_match else ""
-                    
-                    # Check if this is not a system email
-                    is_system_email = any(domain in email_address.lower() for domain in system_domains)
-                    
-                    if email_address and not is_system_email:
-                        # Try to extract a name if available
-                        name_pattern = r'^([^<]+)'
-                        name_match = re.search(name_pattern, sender)
-                        display_name = name_match.group(1).strip() if name_match else email_address
+                    if direction == "incoming":
+                        # Count sender (but not if it's a system email)
+                        email_pattern = r'[\w\.-]+@[\w\.-]+'
+                        email_match = re.search(email_pattern, sender)
+                        email_address = email_match.group(0) if email_match else ""
                         
-                        # Increment counter for this sender
-                        contact_counter[display_name] += 1
+                        # Skip if this is the user's email or a system email
+                        is_system_email = any(domain in email_address.lower() for domain in system_domains)
+                        if email_address and email_address != user_email and not is_system_email:
+                            name_pattern = r'^([^<]+)'
+                            name_match = re.search(name_pattern, sender)
+                            display_name = name_match.group(1).strip() if name_match else email_address
+                            contact_counter[display_name] += 1
+                            # Store the email address with the contact name
+                            contact_emails[display_name] = email_address
+                    else:
+                        # For outgoing emails, count recipients
+                        email_pattern = r'[\w\.-]+@[\w\.-]+'
+                        email_matches = re.findall(email_pattern, recipient)
+                        
+                        for email_address in email_matches:
+                            # Skip if this is the user's email or a system email
+                            is_system_email = any(domain in email_address.lower() for domain in system_domains)
+                            if email_address and email_address != user_email and not is_system_email:
+                                # Try to find a name in the recipient string
+                                recipient_parts = recipient.split(",")
+                                for part in recipient_parts:
+                                    if email_address in part:
+                                        name_pattern = r'^([^<]+)'
+                                        name_match = re.search(name_pattern, part)
+                                        display_name = name_match.group(1).strip() if name_match else email_address
+                                        contact_counter[display_name] += 1
+                                        # Store the email address with the contact name
+                                        contact_emails[display_name] = email_address
+                                        break
         
         # If we were using a progress bar, complete it and clear
         if analyze_contacts and 'progress_bar' in st.session_state:
             st.session_state.progress_bar.progress(1.0, text="Analysis complete!")
             del st.session_state.progress_bar
+        
+        # Store contact emails in session state
+        if analyze_contacts and contact_emails:
+            st.session_state.contact_emails = contact_emails
         
         # Return both email data and contact analysis
         return email_data, contact_counter.most_common(10) if contact_counter else None
@@ -182,6 +258,181 @@ def get_email_data(max_emails=10, analyze_contacts=False):
         st.sidebar.text(traceback.format_exc())
         return None, None
 
+# Function to analyze relationships with a specific contact
+def analyze_relationship(service, contact_email, contact_name, user_email, max_emails=50):
+    """
+    Analyze the relationship between the user and a specific contact
+    based on their email communications.
+    """
+    try:
+        # Fetch both incoming and outgoing emails with this contact
+        incoming_query = f"from:{contact_email}"
+        outgoing_query = f"to:{contact_email}"
+        
+        # Get emails from this contact
+        incoming_results = service.users().messages().list(
+            userId="me", 
+            maxResults=max_emails // 2,
+            q=incoming_query
+        ).execute()
+        
+        # Get emails to this contact
+        outgoing_results = service.users().messages().list(
+            userId="me", 
+            maxResults=max_emails // 2,
+            q=outgoing_query
+        ).execute()
+        
+        incoming_messages = incoming_results.get("messages", [])
+        outgoing_messages = outgoing_results.get("messages", [])
+        
+        # Process the messages to extract content
+        communication_data = []
+        
+        # Process incoming messages
+        with st.spinner(f"Analyzing {len(incoming_messages) + len(outgoing_messages)} emails with {contact_name}..."):
+            # Process incoming messages
+            for i, msg in enumerate(incoming_messages):
+                progress = (i + 1) / (len(incoming_messages) + len(outgoing_messages))
+                st.progress(progress, text=f"Processing emails... {i+1}/{len(incoming_messages) + len(outgoing_messages)}")
+                
+                msg_detail = service.users().messages().get(userId="me", id=msg["id"]).execute()
+                headers = msg_detail.get("payload", {}).get("headers", [])
+                
+                subject = next((h["value"] for h in headers if h["name"] == "Subject"), "(No Subject)")
+                date = next((h["value"] for h in headers if h["name"] == "Date"), "")
+                snippet = msg_detail.get("snippet", "")
+                
+                # Get the body content if available
+                body = ""
+                try:
+                    if "parts" in msg_detail.get("payload", {}):
+                        for part in msg_detail["payload"]["parts"]:
+                            if part["mimeType"] == "text/plain":
+                                if "data" in part["body"]:
+                                    body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
+                                break
+                    elif "body" in msg_detail.get("payload", {}) and "data" in msg_detail["payload"]["body"]:
+                        body = base64.urlsafe_b64decode(msg_detail["payload"]["body"]["data"]).decode("utf-8")
+                except Exception as e:
+                    body = f"[Error extracting body: {str(e)}]"
+                
+                communication_data.append({
+                    "direction": "incoming",
+                    "subject": subject,
+                    "date": date,
+                    "snippet": snippet,
+                    "body": body
+                })
+            
+            # Process outgoing messages
+            for i, msg in enumerate(outgoing_messages):
+                progress = (i + len(incoming_messages) + 1) / (len(incoming_messages) + len(outgoing_messages))
+                st.progress(progress, text=f"Processing emails... {i+len(incoming_messages)+1}/{len(incoming_messages) + len(outgoing_messages)}")
+                
+                msg_detail = service.users().messages().get(userId="me", id=msg["id"]).execute()
+                headers = msg_detail.get("payload", {}).get("headers", [])
+                
+                subject = next((h["value"] for h in headers if h["name"] == "Subject"), "(No Subject)")
+                date = next((h["value"] for h in headers if h["name"] == "Date"), "")
+                snippet = msg_detail.get("snippet", "")
+                
+                # Get the body content if available
+                body = ""
+                try:
+                    if "parts" in msg_detail.get("payload", {}):
+                        for part in msg_detail["payload"]["parts"]:
+                            if part["mimeType"] == "text/plain":
+                                if "data" in part["body"]:
+                                    body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
+                                break
+                    elif "body" in msg_detail.get("payload", {}) and "data" in msg_detail["payload"]["body"]:
+                        body = base64.urlsafe_b64decode(msg_detail["payload"]["body"]["data"]).decode("utf-8")
+                except Exception as e:
+                    body = f"[Error extracting body: {str(e)}]"
+                
+                communication_data.append({
+                    "direction": "outgoing",
+                    "subject": subject,
+                    "date": date,
+                    "snippet": snippet,
+                    "body": body
+                })
+        
+        if not communication_data:
+            return "No email communications found with this contact."
+        
+        # Format the data for analysis
+        formatted_data = format_communication_data(communication_data, contact_name)
+        
+        # Analyze the relationship using OpenAI
+        with st.spinner("AI analyzing relationship patterns..."):
+            analysis = analyze_communication_with_ai(formatted_data, contact_name)
+        
+        return analysis
+        
+    except Exception as e:
+        import traceback
+        st.error(f"Error analyzing relationship: {str(e)}")
+        st.text(traceback.format_exc())
+        return f"Error analyzing relationship: {str(e)}"
+
+def format_communication_data(communication_data, contact_name):
+    """Format the communication data for AI analysis"""
+    formatted = f"Communications with {contact_name}:\n\n"
+    
+    # Sort by date
+    communication_data.sort(key=lambda x: parse_date(x["date"]))
+    
+    # Format each message
+    for comm in communication_data:
+        formatted += f"Direction: {comm['direction'].upper()}\n"
+        formatted += f"Date: {comm['date']}\n"
+        formatted += f"Subject: {comm['subject']}\n"
+        formatted += f"Content: {comm['snippet']}\n"
+        if comm.get('body'):
+            # Include a short excerpt of the body to avoid token limits
+            body_excerpt = comm['body'][:300]
+            formatted += f"Body Excerpt: {body_excerpt}...\n"
+        formatted += "\n---\n\n"
+    
+    return formatted
+
+def analyze_communication_with_ai(formatted_data, contact_name):
+    """Send the communication data to OpenAI for relationship analysis"""
+    system_message = f"""You are a relationship analyzer AI that examines email communications between people.
+    Analyze the provided emails between the user and {contact_name} to determine:
+    
+    1. The relationship type (colleague, client, friend, vendor, etc.)
+    2. Overall sentiment and tone (formal, friendly, collaborative, tense, etc.)
+    3. Common topics discussed
+    4. Communication patterns (who initiates more often, response styles, response times if detectable)
+    5. Any notable observations about the relationship
+    
+    Format your response in clear sections with these headings, and provide specific examples from the emails to support your analysis.
+    """
+    
+    try:
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": f"Please analyze these communications:\n\n{formatted_data}"}
+        ]
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo-16k",  # Using a larger context model
+            messages=messages,
+            temperature=0.4,
+            max_tokens=1000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Analysis error: {str(e)}"
+
+# Function to get contact email from name
+def get_contact_email(contact_name):
+    if "contact_emails" in st.session_state and contact_name in st.session_state.contact_emails:
+        return st.session_state.contact_emails[contact_name]
+    return None
 
 # Function to get Slack messages
 def get_slack_messages():
@@ -522,7 +773,7 @@ if "code" in st.query_params:
             st.query_params.clear()
 
 # Main app interface
-tabs = st.tabs(["Chat", "Communications", "Settings"])
+tabs = st.tabs(["Chat", "Communications", "Relationships", "Settings"])
 
 # Display top contacts if Gmail is connected
 if "gmail_credentials" in st.session_state:
@@ -628,9 +879,6 @@ with tabs[1]:  # Communications tab
     with comm_tabs[1]:  # Slack tab
         st.subheader("💬 Recent Slack Messages")
         
-        # Debug info for this tab
-        st.write("Debug: Persistent state =", st.session_state.get("persistent_slack_state", "Not set"))
-        
         # Check if slack is connected
         if "slack_credentials" not in st.session_state:
             # Slack connection section
@@ -647,9 +895,6 @@ with tabs[1]:  # Communications tab
                 f"&redirect_uri={SLACK_REDIRECT_URI}"
                 f"&state={persistent_state}"
             )
-            
-            # Display debug info
-            st.write("Auth URL (debug):", auth_url[:50] + "...")
             
             # Display regular markdown link (will open in new window)
             st.markdown(f"🔗 [Connect Slack (opens in new window)]({auth_url})")
@@ -706,7 +951,60 @@ with tabs[1]:  # Communications tab
                             st.write(msg["text"])
                     st.write("---")
 
-with tabs[2]:  # Settings tab
+with tabs[2]:  # Relationships tab
+    st.subheader("🤝 Relationship Insights")
+    
+    if "gmail_credentials" not in st.session_state:
+        st.info("Connect your Gmail account to view relationship insights")
+    else:
+        # Get top contacts for analysis
+        if "top_contacts" not in st.session_state:
+            # Trigger the analysis if not already done
+            with st.spinner("Analyzing your email contacts..."):
+                _, top_contacts = get_email_data(max_emails=500, analyze_contacts=True)
+                if top_contacts:
+                    st.session_state.top_contacts = top_contacts
+        
+        if "top_contacts" in st.session_state and st.session_state.top_contacts:
+            # Display a selector for contacts
+            contact_options = [contact[0] for contact in st.session_state.top_contacts]
+            selected_contact = st.selectbox("Select a contact to analyze your relationship:", contact_options)
+            
+            if selected_contact:
+                # Get contact email (you'll need to store email addresses with contact names)
+                contact_email = get_contact_email(selected_contact)
+                
+                if contact_email:
+                    if st.button("Analyze Relationship") or ("current_relationship_analysis" in st.session_state and st.session_state.current_contact == selected_contact):
+                        # Recreate service
+                        creds_dict = st.session_state["gmail_credentials"]
+                        credentials = Credentials(
+                            token=creds_dict["token"],
+                            refresh_token=creds_dict.get("refresh_token"),
+                            token_uri=creds_dict["token_uri"],
+                            client_id=creds_dict["client_id"],
+                            client_secret=creds_dict["client_secret"],
+                            scopes=creds_dict["scopes"]
+                        )
+                        service = build("gmail", "v1", credentials=credentials)
+                        
+                        # Get user email
+                        user_email = get_user_email_address(service)
+                        
+                        # Run the analysis if not cached or contact changed
+                        if "current_relationship_analysis" not in st.session_state or st.session_state.current_contact != selected_contact:
+                            relationship_analysis = analyze_relationship(service, contact_email, selected_contact, user_email)
+                            st.session_state.current_relationship_analysis = relationship_analysis
+                            st.session_state.current_contact = selected_contact
+                        
+                        # Display the analysis
+                        st.markdown(st.session_state.current_relationship_analysis)
+                else:
+                    st.warning(f"Could not find email address for {selected_contact}. Please try another contact.")
+        else:
+            st.info("No contact data available. Please ensure your Gmail account is connected and try refreshing the page.")
+
+with tabs[3]:  # Settings tab
     st.subheader("⚙️ Settings")
     
     # Account connection status
@@ -720,6 +1018,15 @@ with tabs[2]:  # Settings tab
             st.success("✅ Connected")
             if st.button("Disconnect Gmail"):
                 del st.session_state["gmail_credentials"]
+                # Also clear any analysis based on Gmail
+                if "top_contacts" in st.session_state:
+                    del st.session_state["top_contacts"]
+                if "top_contacts_analyzed" in st.session_state:
+                    del st.session_state["top_contacts_analyzed"]
+                if "current_relationship_analysis" in st.session_state:
+                    del st.session_state["current_relationship_analysis"]
+                if "current_contact" in st.session_state:
+                    del st.session_state["current_contact"]
                 st.rerun()
         else:
             st.warning("❌ Not connected")
@@ -805,6 +1112,7 @@ with tabs[2]:  # Settings tab
     - Chat with AI about your emails and Slack messages
     - View recent communications in one place
     - Get insights and summaries of your messages
+    - Analyze your relationships with contacts
     
-    Version: 1.0
+    Version: 1.1
     """)
