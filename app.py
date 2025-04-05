@@ -44,6 +44,30 @@ if "manual_slack_code" not in st.session_state:
 
 # Enhanced Debug section
 with st.sidebar.expander("Debug Information", expanded=True):
+    # Show top Gmail contacts in sidebar
+if "gmail_credentials" in st.session_state:
+    creds_dict = st.session_state["gmail_credentials"]
+    credentials = Credentials(
+        token=creds_dict["token"],
+        refresh_token=creds_dict.get("refresh_token"),
+        token_uri=creds_dict["token_uri"],
+        client_id=creds_dict["client_id"],
+        client_secret=creds_dict["client_secret"],
+        scopes=creds_dict["scopes"]
+    )
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+        st.session_state["gmail_credentials"]["token"] = credentials.token
+
+    service = build("gmail", "v1", credentials=credentials)
+
+    with st.sidebar.expander("💡 Your Top Contacts", expanded=True):
+        top_contacts = get_top_contacts_from_gmail(service)
+        if top_contacts:
+            for name, email in top_contacts:
+                st.markdown(f"**{name}**\n\n`{email}`")
+        else:
+            st.write("No contacts found.")
     st.write("Session State Keys:", list(st.session_state.keys()))
     if "gmail_credentials" in st.session_state:
         st.write("Gmail Connected: Yes")
