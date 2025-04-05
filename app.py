@@ -10,6 +10,8 @@ from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 import openai
 import requests
+import re
+from collections import Counter
 
 # Page configuration
 st.set_page_config(page_title="G – Your AI Assistant", page_icon="🤖")
@@ -135,6 +137,51 @@ def get_email_data():
     except Exception as e:
         st.sidebar.error(f"Error fetching emails: {str(e)}")
         return None
+
+# Function to get top contacts from Gmail
+def get_top_contacts_from_gmail(service, max_emails=500, top_n=10):
+    try:
+        message_ids = []
+        next_page_token = None
+
+        while len(message_ids) < max_emails:
+            results = service.users().messages().list(
+                userId="me",
+                labelIds=["INBOX"],
+                maxResults=min(100, max_emails - len(message_ids)),
+                pageToken=next_page_token
+            ).execute()
+
+            message_ids.extend(results.get("messages", []))
+            next_page_token = results.get("nextPageToken")
+            if not next_page_token:
+                break
+
+        senders = []
+        for msg in message_ids:
+            msg_detail = service.users().messages().get(userId="me", id=msg["id"]).execute()
+            headers = msg_detail.get("payload", {}).get("headers", [])
+            sender_raw = next((h["value"] for h in headers if h["name"] == "From"), "")
+
+            match = re.match(r"(.*)<(.*)>", sender_raw)
+            if match:
+                name = match.group(1).strip()
+                email = match.group(2).strip().lower()
+            else:
+                name = sender_raw.strip()
+                email = sender_raw.strip().lower()
+
+            # Exclude generic notification/automated senders
+            if not re.search(r"(noreply|no-reply|mailer|notification|newsletter|receipt|support|do-not-reply)", email):
+                senders.append((name, email))
+
+        counter = Counter(senders)
+        return counter.most_common(top_n)
+
+    except Exception as e:
+        st.sidebar.error(f"Error fetching top contacts: {e}")
+        return []
+
 
 # Function to get Slack messages
 def get_slack_messages():
@@ -317,6 +364,34 @@ def exchange_slack_code_for_token(auth_code):
         import traceback
         st.code(traceback.format_exc())
         return False
+
+# Show top Gmail contacts in sidebar
+if "gmail_credentials" in st.session_state:
+    creds_dict = st.session_state["gmail_credentials"]
+    credentials = Credentials(
+        token=creds_dict["token"],
+        refresh_token=creds_dict.get("refresh_token"),
+        token_uri=creds_dict["token_uri"],
+        client_id=creds_dict["client_id"],
+        client_secret=creds_dict["client_secret"],
+        scopes=creds_dict["scopes"]
+    )
+
+    # Refresh token if expired
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+        st.session_state["gmail_credentials"]["token"] = credentials.token
+
+    service = build("gmail", "v1", credentials=credentials)
+
+    with st.sidebar.expander("💡 Your Top Contacts", expanded=True):
+        top_contacts = get_top_contacts_from_gmail(service)
+        if top_contacts:
+            for name, email in top_contacts:
+                st.markdown(f"**{name}**\n\n`{email}`")
+        else:
+            st.write("No contacts found yet.")
+
 
 # Function to generate AI response based on user input and data
 def generate_response(user_input, email_data=None, slack_data=None):
