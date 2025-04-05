@@ -615,9 +615,9 @@ with tabs[1]:  # Communications tab
                     email_subject = email.get('subject', 'No Subject')
                     with st.expander(f"📩 {email_subject}"):
                          st.write(f"**From:** {email.get('sender', 'Unknown Sender')}")
-                        st.write(f"**Date:** {email.get('date', 'No Date')}")
-                        st.write("**Preview:**")
-                        st.write(email.get('snippet', 'No preview available'))
+                         st.write(f"**Date:** {email.get('date', 'No Date')}")
+                         st.write("**Preview:**")
+                         st.write(email.get('snippet', 'No preview available'))
                 else:
             # Handle case where email is not properly structured
                     st.warning(f"Email #{i} has an invalid format")
