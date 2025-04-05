@@ -446,19 +446,20 @@ def display_top_contacts():
         chart_col, list_col = st.columns([3, 2])
         
         with chart_col:
-            # Prepare data for the chart
-            chart_data = {
+            # Prepare data for the chart using Streamlit's native chart
+            import pandas as pd
+            
+            # Convert to DataFrame for easier charting
+            chart_data = pd.DataFrame({
                 "Contact": [contact[0][:20] + "..." if len(contact[0]) > 20 else contact[0] for contact in st.session_state.top_contacts],
                 "Emails": [contact[1] for contact in st.session_state.top_contacts]
-            }
+            })
             
-            # Display horizontal bar chart
-            import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.barh(chart_data["Contact"][::-1], chart_data["Emails"][::-1])
-            ax.set_xlabel("Number of Emails")
-            ax.set_title("Your Most Frequent Email Contacts")
-            st.pyplot(fig)
+            # Sort the data for proper display
+            chart_data = chart_data.sort_values("Emails", ascending=True)
+            
+            # Use Streamlit's native bar chart
+            st.bar_chart(chart_data.set_index("Contact"))
         
         with list_col:
             # Display as a list with counts
