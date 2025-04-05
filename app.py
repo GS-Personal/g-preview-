@@ -619,6 +619,9 @@ with tabs[1]:  # Communications tab
                                 st.write(f"**Date:** {email.get('date', 'No Date')}")
                                 st.write("**Preview:**")
                                 st.write(email.get('snippet', 'No preview available'))
+                       else:
+            # Handle case where email is not properly structured
+                            st.warning(f"Email #{i} has an invalid format")
                 else:
                     st.info("No emails found.")
     
