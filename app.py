@@ -617,8 +617,8 @@ with tabs[1]:  # Communications tab
                             st.write(f"**Date:** {email.get('date', 'No Date')}")
                             st.write("**Preview:**")
                             st.write(email.get('snippet', 'No preview available'))
-else:
-    st.info("No emails found.")
+                else:
+                    st.info("No emails found.")
     
     with comm_tabs[1]:  # Slack tab
         st.subheader("💬 Recent Slack Messages")
