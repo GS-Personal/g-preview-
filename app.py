@@ -612,7 +612,7 @@ with tabs[1]:  # Communications tab
                     for i, email in enumerate(email_data, 1):
                     # Check if email is a dictionary and has necessary fields
                         if isinstance(email, dict):
-            # Use a safer approach for the expander title
+                    # Use a safer approach for the expander title
                             email_subject = email.get('subject', 'No Subject')
                             with st.expander(f"📩 {email_subject}"):
                                 st.write(f"**From:** {email.get('sender', 'Unknown Sender')}")
@@ -620,7 +620,7 @@ with tabs[1]:  # Communications tab
                                 st.write("**Preview:**")
                                 st.write(email.get('snippet', 'No preview available'))
                        else:
-            # Handle case where email is not properly structured
+                    # Handle case where email is not properly structured
                             st.warning(f"Email #{i} has an invalid format")
                 else:
                     st.info("No emails found.")
