@@ -611,12 +611,12 @@ with tabs[1]:  # Communications tab
                 if email_data:
                     for i, email in enumerate(email_data, 1):
                     # Use a safer approach for the expander title
-                    email_subject = email.get('subject', 'No Subject')
-                    with st.expander(f"📩 {email_subject}"):
-                    st.write(f"**From:** {email.get('sender', 'Unknown Sender')}")
-                    st.write(f"**Date:** {email.get('date', 'No Date')}")
-                    st.write("**Preview:**")
-                    st.write(email.get('snippet', 'No preview available'))
+                        email_subject = email.get('subject', 'No Subject')
+                        with st.expander(f"📩 {email_subject}"):
+                            st.write(f"**From:** {email.get('sender', 'Unknown Sender')}")
+                            st.write(f"**Date:** {email.get('date', 'No Date')}")
+                            st.write("**Preview:**")
+                            st.write(email.get('snippet', 'No preview available'))
 else:
     st.info("No emails found.")
     
