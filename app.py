@@ -608,15 +608,17 @@ with tabs[1]:  # Communications tab
             if not email_data:
                 st.info("No unread emails found.")
             else:
-                if email_data:
+               if email_data:
                     for i, email in enumerate(email_data, 1):
-                    # Use a safer approach for the expander title
-                        email_subject = email.get('subject', 'No Subject')
-                        with st.expander(f"📩 {email_subject}"):
-                            st.write(f"**From:** {email.get('sender', 'Unknown Sender')}")
-                            st.write(f"**Date:** {email.get('date', 'No Date')}")
-                            st.write("**Preview:**")
-                            st.write(email.get('snippet', 'No preview available'))
+                    # Check if email is a dictionary and has necessary fields
+                        if isinstance(email, dict):
+            # Use a safer approach for the expander title
+                            email_subject = email.get('subject', 'No Subject')
+                            with st.expander(f"📩 {email_subject}"):
+                                st.write(f"**From:** {email.get('sender', 'Unknown Sender')}")
+                                st.write(f"**Date:** {email.get('date', 'No Date')}")
+                                st.write("**Preview:**")
+                                st.write(email.get('snippet', 'No preview available'))
                 else:
                     st.info("No emails found.")
     
